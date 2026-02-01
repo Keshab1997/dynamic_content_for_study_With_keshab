@@ -1,56 +1,171 @@
-// Filename: js/script.js - Upgraded for Chapter-Based Dashboard, Leaderboard & Correct Total Question Count
+// =================================================
+// FILE: js/script.js
+// DESCRIPTION: Main logic for dynamic content loading
+// =================================================
 
-// === পরিবর্তন: CountUp ক্লাসটি মডিউল থেকে সঠিকভাবে ইম্পোর্ট করা হয়েছে ===
+const db = firebase.firestore();
+const auth = firebase.auth();
+const chapterId = "Algebra"; // আপনার চ্যাপ্টার আইডি
+
+// === পরিবর্তন: CountUp ক্লাসটি মডিউল থেকে সঠিকভাবে ইম্পোর্ট করা হয়েছে ===
 import { CountUp } from "https://cdn.jsdelivr.net/npm/countup.js@2.0.7/dist/countUp.min.js";
 
 // এই ভেরিয়েবলটি নিশ্চিত করবে যে চার্টের প্লাগইনটি শুধু একবার রেজিস্টার হবে
 let isChartPluginRegistered = false;
 
 document.addEventListener("DOMContentLoaded", () => {
-    // Firebase Authentication Check
-    firebase.auth().onAuthStateChanged((user) => {
-        if (user) {
-            // ব্যবহারকারী লগইন করা থাকলে অ্যাপ শুরু হবে
-            initApp(user);
-        } else {
-            // যদি ব্যবহারকারী লগইন করা না থাকে, তাহলে লগইন পেজে পাঠিয়ে দেওয়া হবে।
-            // নিশ্চিত করুন আপনার লগইন পেজের লিঙ্কটি সঠিক
-            window.location.href =
-                "https://keshab1997.github.io/Study-With-Keshab/login.html";
-        }
-    });
+    initApp();
 });
 
+function initApp() {
+    // ১. অথেন্টিকেশন চেক
+    auth.onAuthStateChanged((user) => {
+        if (user) {
+            loadUserData(user);
+            loadDynamicContent();
+            checkAdminStatus(user);
+            // বিদ্যমান ফাংশনগুলো কল করা
+            initAppExtended(user);
+        } else {
+            // টেস্টিং এর জন্য রিডাইরেক্ট বন্ধ করা হয়েছে
+            console.log("User not logged in - redirect disabled for testing");
+            // window.location.href = "https://keshab1997.github.io/Study-With-Keshab/login.html";
+        }
+    });
+
+    // ২. ডার্ক মোড লজিক
+    const darkModeBtn = document.getElementById('dark-mode-toggle');
+    if (darkModeBtn) {
+        darkModeBtn.addEventListener('click', () => {
+            document.body.classList.toggle('dark-mode');
+            const isDark = document.body.classList.contains('dark-mode');
+            localStorage.setItem('theme', isDark ? 'dark' : 'light');
+            darkModeBtn.innerHTML = isDark ? '<i class="fa-solid fa-sun"></i>' : '<i class="fa-solid fa-moon"></i>';
+        });
+    }
+
+    // ৩. সার্চ লজিক
+    const searchBar = document.getElementById('search-bar');
+    if (searchBar) {
+        searchBar.addEventListener('input', (e) => {
+            const term = e.target.value.toLowerCase();
+            filterContent(term);
+        });
+    }
+}
+
+// ইউজার ডেটা লোড করা
+async function loadUserData(user) {
+    document.getElementById('user-display-name').innerText = user.displayName || "ছাত্র/ছাত্রী";
+    document.getElementById('user-email').innerText = user.email;
+    if (user.photoURL) {
+        document.getElementById('user-profile-pic').src = user.photoURL;
+    }
+}
+
+// অ্যাডমিন বাটন দেখানো (যদি ইমেইল ম্যাচ করে)
+function checkAdminStatus(user) {
+    const adminEmails = ["keshabsarkar2018@gmail.com", "admin@example.com"]; // আপনার ইমেইল এখানে দিন
+    if (adminEmails.includes(user.email)) {
+        const adminBtn = document.getElementById('admin-btn-top');
+        if (adminBtn) adminBtn.style.display = "block";
+    }
+}
+
+// ফায়ারবেস থেকে ডাইনামিক কন্টেন্ট লোড করা
+function loadDynamicContent() {
+    db.collection("chapters").doc(chapterId).onSnapshot((doc) => {
+        if (doc.exists) {
+            const data = doc.data();
+            
+            // হেডার আপডেট
+            if (data.name) document.querySelector('.header-text h1').innerText = `অধ্যায়: ${data.name}`;
+            if (data.subtitle) document.querySelector('.header-text p').innerText = data.subtitle;
+
+            // ক্লাস লিস্ট রেন্ডার
+            renderClassList(data.classes || []);
+
+            // পিডিএফ লিস্ট রেন্ডার
+            if (window.updatePdfList) {
+                window.updatePdfList(data.pdfs || []);
+            }
+
+            // কুইজ লিস্ট রেন্ডার
+            renderQuizList(data.quizzes || []);
+            
+            // CBT লিংক আপডেট
+            const cbtBtn = document.querySelector('.color-cbt');
+            if (cbtBtn && data.cbtLink) {
+                cbtBtn.href = data.cbtLink;
+            }
+        }
+    });
+}
+
+function renderClassList(classes) {
+    const container = document.getElementById('dynamic-class-list');
+    if (!container) return;
+    
+    if (classes.length === 0) {
+        container.innerHTML = "<p>কোনো ক্লাস পাওয়া যায়নি।</p>";
+        return;
+    }
+
+    container.innerHTML = classes.map(c => `
+        <a href="class/template.html?id=${c.id}" class="class-link">
+            <i class="fa-solid fa-play-circle"></i> ${c.title}
+        </a>
+    `).join('');
+}
+
+function renderQuizList(quizzes) {
+    const container = document.getElementById('dynamic-quiz-list');
+    if (!container) return;
+
+    if (quizzes.length === 0) {
+        container.innerHTML = "<p>কোনো কুইজ পাওয়া যায়নি।</p>";
+        return;
+    }
+
+    container.innerHTML = quizzes.map(q => `
+        <a href="quiz/${q.id}.html" class="quiz-link">
+            <i class="fa-solid fa-pen-to-square"></i> ${q.title}
+        </a>
+    `).join('');
+}
+
+function filterContent(term) {
+    const links = document.querySelectorAll('.link-container a');
+    links.forEach(link => {
+        const text = link.innerText.toLowerCase();
+        link.style.display = text.includes(term) ? "inline-flex" : "none";
+    });
+}
+
 /**
- * Main function to initialize all functionalities.
+ * Extended initialization function for existing features
  * @param {firebase.User} user - The authenticated user object.
  */
-function initApp(user) {
+function initAppExtended(user) {
     const preloader = document.getElementById("preloader");
     if (preloader) {
         preloader.style.display = "none";
     }
 
-    const db = firebase.firestore();
-
-    // অধ্যায়ের নাম HTML ফাইল থেকে dynamically লোড করা হচ্ছে
-    if (typeof CURRENT_CHAPTER_NAME === "undefined") {
-        console.error(
-            "অধ্যায়ের নাম (CURRENT_CHAPTER_NAME) HTML ফাইলে সেট করা হয়নি।",
-        );
-        const chapterName = "Unknown Chapter";
-        alert("ত্রুটি: অধ্যায়ের নাম পাওয়া যায়নি।");
+    // অধ্যায়ের নাম HTML ফাইল থেকে dynamically লোড করা হচ্ছে
+    let chapterName = "Algebra";
+    if (typeof CURRENT_CHAPTER_NAME !== "undefined") {
+        chapterName = CURRENT_CHAPTER_NAME;
     }
-    const chapterName = CURRENT_CHAPTER_NAME;
     const chapterKey = chapterName.replace(/\s+/g, "_").replace(/,/g, ""); // Firestore-এর জন্য নিরাপদ কী
 
     // --- UI সেটআপ এবং ডেটা লোড ---
     setupUserProfile(user);
     setupUIInteractions();
 
-    // --- Firebase থেকে অধ্যায়-ভিত্তিক ডেটা লোড ---
-    loadChapterLeaderboard(db, chapterKey); // অধ্যায়-ভিত্তিক লিডারবোর্ড
-    loadDashboardData(db, user.uid, chapterKey); // অধ্যায়-ভিত্তিক ড্যাশবোর্ড
+    // --- Firebase থেকে অধ্যায়-ভিত্তিক ডেটা লোড ---
+    loadChapterLeaderboard(db, chapterKey); // অধ্যায়-ভিত্তিক লিডারবোর্ড
+    loadDashboardData(db, user.uid, chapterKey); // অধ্যায়-ভিত্তিক ড্যাশবোর্ড
 
     // আপনার উন্নত রেজাল্ট কার্ড ফাংশনটি এখানে কল করা হচ্ছে
     generateUserResult(db, user, chapterKey, chapterName);
@@ -197,7 +312,7 @@ function loadChapterLeaderboard(db, chapterKey) {
         .then((snapshot) => {
             if (snapshot.empty) {
                 leaderboardBody.innerHTML =
-                    '<tr><td colspan="4" style="text-align:center; padding: 20px;">এই অধ্যায়ের জন্য কোনো স্কোর পাওয়া যায়নি।</td></tr>';
+                    '<tr><td colspan="4" style="text-align:center; padding: 20px;">এই অধ্যায়ের জন্য কোনো স্কোর পাওয়া যায়নি।</td></tr>';
                 return;
             }
 
@@ -260,13 +375,13 @@ function loadChapterLeaderboard(db, chapterKey) {
                 leaderboardBody.innerHTML = leaderboardHTML;
             } else {
                 leaderboardBody.innerHTML =
-                    '<tr><td colspan="4" style="text-align:center; padding: 20px;">এই অধ্যায়ের জন্য কোনো স্কোর পাওয়া যায়নি।</td></tr>';
+                    '<tr><td colspan="4" style="text-align:center; padding: 20px;">এই অধ্যায়ের জন্য কোনো স্কোর পাওয়া যায়নি।</td></tr>';
             }
         })
         .catch((error) => {
             console.error("Error loading chapter leaderboard:", error);
             leaderboardBody.innerHTML =
-                '<tr><td colspan="4" style="text-align:center; padding: 20px;">ত্রুটি: লিডারবোর্ড লোড করা যায়নি।</td></tr>';
+                '<tr><td colspan="4" style="text-align:center; padding: 20px;">ত্রুটি: লিডারবোর্ড লোড করা যায়নি।</td></tr>';
         });
 }
 
@@ -300,7 +415,7 @@ function generateUserResult(db, user, chapterKey, chapterDisplayName) {
 
                     const totalCorrect = chapterData.totalCorrect || 0;
 
-                    // === ## পরিবর্তন: মোট প্রশ্ন গণনার লজিক ঠিক করা হয়েছে ## ===
+                    // === ## পরিবর্তন: মোট প্রশ্ন গণনার লজিক ঠিক করা হয়েছে ## ===
                     const totalQuestions = chapterData.quiz_sets
                         ? Object.values(chapterData.quiz_sets).reduce(
                               (sum, set) => sum + set.totalQuestions,
@@ -334,7 +449,7 @@ function generateUserResult(db, user, chapterKey, chapterDisplayName) {
 
                     if (rank === 1) {
                         badges.push({
-                            text: "🏆 অধ্যায়ের সেরা",
+                            text: "🏆 অধ্যায়ের সেরা",
                             class: "topper",
                         });
                     } else if (rank <= 3) {
@@ -379,7 +494,7 @@ function generateUserResult(db, user, chapterKey, chapterDisplayName) {
                     let motivationalMessage = "";
                     if (accuracy >= 90)
                         motivationalMessage =
-                            "অসাধারণ! তোমার প্রস্তুতি শিখরে। চালিয়ে যাও!";
+                            "অসাধারণ! তোমার প্রস্তুতি শিখরে। চালিয়ে যাও!";
                     else if (accuracy >= 70)
                         motivationalMessage =
                             "দারুণ চেষ্টা! ভুলগুলো আরেকবার দেখে নিলেই তুমি সেরা হবে।";
@@ -391,7 +506,7 @@ function generateUserResult(db, user, chapterKey, chapterDisplayName) {
                         "Biology ",
                         "",
                     );
-                    const shareText = `আমি '${cleanChapterName}' অধ্যায়ে ${score} স্কোর করেছি! Study With Keshab-এ আমার র‍্যাঙ্ক #${rank}। তুমিও তোমার প্রস্তুতি যাচাই করো!`;
+                    const shareText = `আমি '${cleanChapterName}' অধ্যায়ে ${score} স্কোর করেছি! Study With Keshab-এ আমার র্যাঙ্ক #${rank}। তুমিও তোমার প্রস্তুতি যাচাই করো!`;
                     const whatsappUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(shareText + " " + window.location.href)}`;
                     const facebookUrl = `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(window.location.href)}&quote=${encodeURIComponent(shareText)}`;
 
@@ -419,18 +534,18 @@ function generateUserResult(db, user, chapterKey, chapterDisplayName) {
                                     </p>
                                 </div>
                                 <div class="result-item">
-                                    <h4>র‍্যাঙ্ক</h4>
+                                    <h4>র্যাঙ্ক</h4>
                                     <p id="user-rank">#${rank}</p>
                                 </div>
                             </div>
                         </div>
 
                         <p class="performance-comparison">
-                            আপনি এই অধ্যায়ে <strong>${betterThanPercentage}%</strong> শিক্ষার্থীর চেয়ে এগিয়ে আছেন!
+                            আপনি এই অধ্যায়ে <strong>${betterThanPercentage}%</strong> শিক্ষার্থীর চেয়ে এগিয়ে আছেন!
                         </p>
 
                         <div class="result-share">
-                             <p>আপনার রেজাল্ট শেয়ার করুন!</p>
+                             <p>আপনার রেজাল্ট শেয়ার করুন!</p>
                             <div class="share-buttons">
                                 <a href="${whatsappUrl}" target="_blank" class="share-btn whatsapp"><i class="fab fa-whatsapp"></i> WhatsApp</a>
                                 <a href="${facebookUrl}" target="_blank" class="share-btn facebook"><i class="fab fa-facebook-f"></i> Facebook</a>
@@ -484,7 +599,7 @@ function generateUserResult(db, user, chapterKey, chapterDisplayName) {
                                 .catch((err) => {
                                     console.error("Download failed:", err);
                                     btn.innerHTML =
-                                        '<i class="fa-solid fa-camera"></i> ডাউনলোড ব্যর্থ হয়েছে';
+                                        '<i class="fa-solid fa-camera"></i> ডাউনলোড ব্যর্থ হয়েছে';
                                     btn.disabled = false;
                                 });
                         });
@@ -501,7 +616,7 @@ function generateUserResult(db, user, chapterKey, chapterDisplayName) {
         })
         .catch((error) => {
             console.error("Error fetching user result: ", error);
-            resultContainer.innerHTML = `<p style="text-align: center;">রেজাল্ট লোড করা সম্ভব হয়নি। অনুগ্রহ করে আবার চেষ্টা করুন।</p>`;
+            resultContainer.innerHTML = `<p style="text-align: center;">রেজাল্ট লোড করা সম্ভব হয়নি। অনুগ্রহ করে আবার চেষ্টা করুন।</p>`;
         });
 }
 
@@ -640,7 +755,7 @@ function updatePieChart(correct, wrong) {
                   datasets: [{ data: [1], backgroundColor: ["#bdc3c7"] }],
               }
             : {
-                  labels: ["সঠিক উত্তর", "ভুল ও উত্তর না দেওয়া"], // Label changed for clarity
+                  labels: ["সঠিক উত্তর", "ভুল ও উত্তর না দেওয়া"], // Label changed for clarity
                   datasets: [
                       {
                           data: [correct, wrong],
@@ -689,21 +804,21 @@ function updateUserAchievements(chapterData, totalQuizzes) {
             title: "প্রথম পদক্ষেপ",
             icon: "fa-shoe-prints",
             criteria: (count) => count >= 1,
-            desc: "এই অধ্যায়ের প্রথম কুইজ সম্পন্ন করেছেন!",
+            desc: "এই অধ্যায়ের প্রথম কুইজ সম্পন্ন করেছেন!",
         },
         {
             id: "quiz_master",
             title: "কুইজ মাস্টার",
             icon: "fa-brain",
             criteria: (count) => count >= Math.ceil(totalQuizzes / 2),
-            desc: `এই অধ্যায়ের অর্ধেক (${Math.ceil(totalQuizzes / 2)}টি) কুইজ সম্পন্ন করেছেন!`,
+            desc: `এই অধ্যায়ের অর্ধেক (${Math.ceil(totalQuizzes / 2)}টি) কুইজ সম্পন্ন করেছেন!`,
         },
         {
             id: "chapter_winner",
-            title: "অধ্যায় বিজয়ী",
+            title: "অধ্যায় বিজয়ী",
             icon: "fa-crown",
             criteria: (count) => count >= totalQuizzes,
-            desc: "এই অধ্যায়ের সব কুইজ সম্পন্ন করেছেন!",
+            desc: "এই অধ্যায়ের সব কুইজ সম্পন্ন করেছেন!",
         },
     ];
     achievementsContainer.innerHTML = "";
@@ -733,79 +848,9 @@ function loadDailyChallenge() {
     challengeText.textContent = challenges[dayOfYear % challenges.length];
 }
 
-// ===============================================
-// --- Admin Button Control ---
-// ===============================================
-
-// Admin Button Control - আপনার অ্যাডমিন ইমেইল এখানে লিখুন
-const ADMIN_EMAIL = "keshabsarkar2018@gmail.com"; // আপনার সঠিক ইমেইল
-
-firebase.auth().onAuthStateChanged((user) => {
-    if (user) {
-        // চেক করার জন্য কনসোলে প্রিন্ট করি
-        console.log("Logged in user:", user.email);
-        
-        if (user.email === ADMIN_EMAIL) {
-            const adminBtn = document.getElementById('admin-btn-top');
-            if (adminBtn) {
-                adminBtn.style.display = 'flex';
-                console.log("Admin button visible in header.");
-            }
-        }
-    }
-});
-// ===============================================
-// --- Dynamic Chapter Settings Loader ---
-// ===============================================
-
-async function loadChapterSettings() {
-    const db = firebase.firestore();
-    const chapterId = "Algebra";
-
-    try {
-        const doc = await db.collection("chapters").doc(chapterId).get();
-        if (doc.exists) {
-            const data = doc.data();
-
-            // ১. নাম ও সাবটাইটেল আপডেট
-            if(data.name) document.querySelector('.header-text h1').innerText = `অধ্যায়: ${data.name}`;
-            if(data.subtitle) document.querySelector('.header-text p').innerText = data.subtitle;
-
-            // ২. ক্লাস লিস্ট রেন্ডার
-            const classList = document.getElementById('dynamic-class-list');
-            if(classList && data.classes) {
-                classList.innerHTML = data.classes.map(cls => `
-                    <a href="class/template.html?id=${cls.id}" class="styled-link">
-                        <i class="fa-solid fa-book-open-reader"></i> ${cls.title}
-                    </a>
-                `).join('');
-            }
-
-            // ৩. কুইজ লিস্ট রেন্ডার
-            const quizList = document.getElementById('dynamic-quiz-list');
-            if(quizList && data.quizzes) {
-                quizList.innerHTML = data.quizzes.map(qz => `
-                    <a href="quiz/${qz.id}.html" class="styled-link">
-                        <i class="fa-solid fa-vial"></i> ${qz.title}
-                    </a>
-                `).join('');
-            }
-
-            // ৪. পিডিএফ লিস্ট আপডেট (pdf-viewer.js এর জন্য)
-            if(data.pdfs && window.updatePdfList) {
-                window.updatePdfList(data.pdfs);
-            }
-
-            // ৫. CBT লিংক আপডেট
-            if(data.cbtLink) {
-                const cbtBtn = document.querySelector('.color-cbt');
-                if(cbtBtn) cbtBtn.href = data.cbtLink;
-            }
-        }
-    } catch (error) {
-        console.error("Error loading dynamic settings:", error);
-    }
-}
-
-// পেজ লোড হলে কল করুন
-document.addEventListener('DOMContentLoaded', loadChapterSettings);
+// প্রি-লোডার বন্ধ করা
+window.onload = () => {
+    const preloader = document.getElementById('preloader');
+    if (preloader) preloader.style.opacity = '0';
+    setTimeout(() => { if (preloader) preloader.style.display = 'none'; }, 500);
+};
